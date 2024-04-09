@@ -1,119 +1,95 @@
-﻿using System;
-using System.IO;
+﻿using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using DocumentFormat.OpenXml;
-using System.Globalization;
-using DocumentFormat.OpenXml.Spreadsheet;
+using System;
+using System.IO;
+using System.Linq;
 
-class Program {
-    static void DividiWord(string fileInput, string cartellaOutput)
+public class WordDocumentSplitter
+{
+    public void SplitDocument(string sourceFilePath)
     {
-        using (var doc = WordprocessingDocument.Open(fileInput, false))
+        using (WordprocessingDocument wordDoc = WordprocessingDocument.Open(sourceFilePath, true))
         {
-            int capitolo = 1;
-            var paragrafi = doc.MainDocumentPart.Document.Body.Descendants<Paragraph>();
-            static void Main(string[] args)
-            {
-                // Inserire il percorso del file Word
-                string filePath = @"C:\Users\RMD.Cataldi\source\repos\SplitWord\SplitWord\DocDaSplittare.docx";
+            var doc = wordDoc.MainDocumentPart.Document;
 
-                SezionaFileWord(filePath);
+            var titles = doc.Body.Elements<Paragraph>().Where(p => IsHeading2(p)).ToList();
+            Console.WriteLine("Titoli trovati nel documento:");
+            foreach (var title in titles)
+            {
+                Console.WriteLine(title.InnerText);
             }
+            int sectionIndex = 0;
 
-            foreach (var paragrafo in paragrafi)
+            string outputDirectory = "C:\\Users\\Gu.Langella\\Documents\\split"; 
+
+            foreach (var title in titles)
             {
-                if (paragrafo.ParagraphProperties.StyleId == "Titolo")
+                sectionIndex++;
+                string newFileName = $"Section_{sectionIndex}.docx";
+                string newFilePath = Path.Combine(outputDirectory, newFileName);
+
+                while (File.Exists(newFilePath))
                 {
-                    var nomeFile = Path.Combine(cartellaOutput, $"Capitolo{capitolo:00}.docx");
-                    using (var docCapitolo = WordprocessingDocument.Create(nomeFile, WordprocessingDocumentType.Document))
+                    newFileName = $"Section_{sectionIndex++}.docx";
+                    newFilePath = Path.Combine(outputDirectory, newFileName);
+                }
+
+                using (WordprocessingDocument newDoc = WordprocessingDocument.Create(newFilePath, WordprocessingDocumentType.Document))
+                {
+                    newDoc.AddMainDocumentPart();
+                    newDoc.MainDocumentPart.Document = new Document();
+                    newDoc.MainDocumentPart.Document.Body = new Body();
+                    CloneStyles(wordDoc, newDoc);
+
+                    var current = title.NextSibling();
+                    while (current != null && !IsHeading2(current as Paragraph))
                     {
-                        var mainPart = docCapitolo.AddMainDocumentPart();
-                        mainPart.Document = new Document();
-
-                        // Copia il paragrafo titolo
-                        var paragrafoClone = paragrafo.CloneNode(true);
-                        mainPart.Document.AppendChild(paragrafoClone);
-
-                        // Copia il corpo del capitolo
-                        var paragrafiSuccessivi = paragrafo.NextSibling;
-                        while (paragrafiSuccessivi != null && paragrafiSuccessivi.ParagraphProperties.StyleId != "Titolo")
-                        {
-                            var paragrafoSuccessivoClone = paragrafiSuccessivi.CloneNode(true);
-                            mainPart.Document.AppendChild(paragrafoSuccessivoClone);
-                            paragrafiSuccessivi = paragrafiSuccessivi.NextSibling;
-                        }
-
-                        // Copia tabelle e immagini
-                        CopiaTabelleImmagini(doc, mainPart, paragrafo, paragrafiSuccessivi);
+                        newDoc.MainDocumentPart.Document.Body.Append(current.CloneNode(true));
+                        current = current.NextSibling();
                     }
-                    capitolo++;
+
+                    newDoc.MainDocumentPart.Document.Save();
                 }
             }
         }
     }
 
-    private static void SezionaFileWord(string filePath)
+    private bool IsHeading2(Paragraph paragraph)
     {
-        throw new NotImplementedException();
+        return paragraph != null &&
+               paragraph.ParagraphProperties != null &&
+               paragraph.ParagraphProperties.ParagraphStyleId != null &&
+               paragraph.ParagraphProperties.ParagraphStyleId.Val != null &&
+               paragraph.ParagraphProperties.ParagraphStyleId.Val == "Titolo2";
     }
 
-    static void CopiaTabelleImmagini(WordprocessingDocument doc, MainDocumentPart mainPart, Body body, OpenXmlElement paragrafo)
+    private void CloneStyles(WordprocessingDocument sourceDoc, WordprocessingDocument targetDoc)
     {
-        var relazioni = doc.MainDocumentPart.GetPartsOfType<ImagePart>();
-        foreach (var relazione in relazioni)
+        var sourcePart = sourceDoc.MainDocumentPart.StyleDefinitionsPart;
+        if (sourcePart != null)
         {
-            var id = relazione.RelationshipId;
-            var img = body.Descendants<Drawing>().Where(x => x.Id == id).FirstOrDefault();
-            if (img != null)
+            var targetPart = targetDoc.MainDocumentPart.StyleDefinitionsPart;
+            if (targetPart == null)
             {
-                var imgClone = img.CloneNode(true);
-                mainPart.Document.AppendChild(imgClone);
+                targetPart = targetDoc.MainDocumentPart.AddNewPart<StyleDefinitionsPart>();
             }
-        }
 
-        var relazioniTabelle = doc.MainDocumentPart.GetPartsOfType<TablePart>();
-        foreach (var relazioneTabella in relazioniTabelle)
-        {
-            var id = relazioneTabella.RelationshipId;
-            var tabella = body.Descendants<Table>().Where(x => x.Id == id).FirstOrDefault();
-            if (tabella != null)
+            using (Stream sourceStream = sourcePart.GetStream())
             {
-                var tabellaClone = tabella.CloneNode(true);
-                mainPart.Document.AppendChild(tabellaClone);
+                targetPart.FeedData(sourceStream);
             }
         }
     }
-    static void UnisciWord(string cartellaInput, string fileOutput)
-    {
-        using (var doc = WordprocessingDocument.Create(fileOutput, WordprocessingDocumentType.Document))
-        {
-            var mainPart = doc.AddMainDocumentPart();
-            mainPart.Document = new Document();
 
-            var files = Directory.GetFiles(cartellaInput, "*.docx");
-            foreach (var file in files.OrderBy(x => int.Parse(Path.GetFileNameWithoutExtension(x).Substring(8))))
-            {
-                using (var docCapitolo = WordprocessingDocument.Open(file, false))
-                {
-                    var bodyCapitolo = docCapitolo.MainDocumentPart.Document.Body;
-                    foreach (var elemento in bodyCapitolo.Elements())
-                    {
-                        mainPart.Document.AppendChild(elemento.CloneNode(true));
-                    }
-                }
-            }
-        }
+    static void Main(string[] args)
+    {
+        string sourceFilePath = "C:\\Users\\Gu.Langella\\Documents\\GitHub\\SplitWord-Project\\SplitWord\\DocDaSplittare.docx";
+
+        WordDocumentSplitter splitter = new WordDocumentSplitter();
+        splitter.SplitDocument(sourceFilePath);
+
+        Console.WriteLine("Documento diviso con successo.");
+        Console.ReadLine(); 
     }
 }
-
-
-//    static void Main(string[] args)
-//    {
-//        // Inserire il percorso del file Word
-//        string filePath = @"C:\Users\RMD.Cataldi\source\repos\SplitWord\SplitWord\DocDaSplittare.docx";
-
-//        SezionaFileWord(filePath);
-//    }
-//}
-
